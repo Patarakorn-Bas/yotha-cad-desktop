@@ -1,3 +1,8 @@
+# สร้างไฟล์ติดตั้ง YothaCAD-Setup-x.y.z.exe บนเครื่อง Windows ของ GitHub แล้วเก็บเป็น Release ฉบับร่าง (Draft)
+# ผู้ใช้จะยังไม่ได้รับอัปเดต จนกว่าจะทดสอบแล้วกด Publish release ในหน้า Releases
+#
+# วิธีใช้ (แบบง่าย): แท็บ Actions → "Build Windows installer" → Run workflow → ใส่เลขเวอร์ชัน → Run
+# วิธีใช้ (แบบ git):  git tag v1.2.0 && git push origin v1.2.0
 name: Build Windows installer
 
 on:
@@ -17,13 +22,14 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: write   # สำหรับสร้าง Release และอัปโหลดไฟล์ .exe
 
 concurrency:
   group: build-windows
   cancel-in-progress: false
 
 env:
+  # ที่อยู่ของโยธาแคดเวอร์ชันเว็บ (ใช้เมื่อติ๊ก "ดึงไฟล์ HTML ล่าสุดจากเว็บ")
   WEB_URL: https://patarakorn-bas.github.io/yotha-cad/
 
 jobs:
@@ -32,7 +38,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: ดึงโค้ด
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: ตรวจและตั้งเลขเวอร์ชัน
         id: ver
@@ -64,7 +70,7 @@ jobs:
           "ดึง HTML จาก $env:WEB_URL ($([math]::Round($html.Length/1024)) KB)" >> $env:GITHUB_STEP_SUMMARY
 
       - name: ติดตั้ง Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -89,19 +95,57 @@ jobs:
       - name: ตั้งเลขเวอร์ชันใน package.json
         run: npm version ${{ steps.ver.outputs.version }} --no-git-tag-version --allow-same-version
 
-      - name: สร้างไฟล์ติดตั้งและเก็บเป็น Release ฉบับร่าง
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release
+      - name: สร้างไฟล์ติดตั้ง
+        run: npm run dist
+
+      - name: ตรวจว่าได้ไฟล์ครบ
+        id: files
+        shell: bash
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          EXE="dist/YothaCAD-Setup-$V.exe"
+          ls -la dist
+          for f in "$EXE" "$EXE.blockmap" dist/latest.yml; do
+            [ -s "$f" ] || { echo "::error::ไม่พบไฟล์ $f"; exit 1; }
+          done
+          echo "exe=$EXE" >> "$GITHUB_OUTPUT"
+          echo "ไฟล์ติดตั้ง: $(basename "$EXE") ($(( $(stat -c%s "$EXE") / 1048576 )) MB)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: เก็บไฟล์ติดตั้งไว้ในหน้า Actions ด้วย
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: YothaCAD-Setup-${{ steps.ver.outputs.version }}
           path: |
             dist/*.exe
+            dist/*.blockmap
             dist/latest.yml
           retention-days: 30
+
+      - name: อัปโหลดไปยัง Release ฉบับร่าง
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"; T="v$V"; EXE="${{ steps.files.outputs.exe }}"
+          FILES=("$EXE" "$EXE.blockmap" dist/latest.yml)
+          if gh release view "$T" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "$(gh release view "$T" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)" != "true" ]; then
+              echo "::error::$T ถูก Publish ไปแล้ว — Run ใหม่ด้วยเลขเวอร์ชันที่สูงกว่า"
+              exit 1
+            fi
+            echo "มีฉบับร่าง $T อยู่แล้ว → อัปโหลดไฟล์ใหม่ทับ"
+            gh release upload "$T" "${FILES[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$T" "${FILES[@]}" --repo "$GITHUB_REPOSITORY" --draft \
+              --title "$V" --target "$GITHUB_SHA" \
+              --notes "โยธาแคดสำหรับ Windows $V — ดาวน์โหลด YothaCAD-Setup-$V.exe"
+          fi
+          echo "ไฟล์ใน Release:"
+          ASSETS=$(gh release view "$T" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+          echo "$ASSETS"
+          for f in "${FILES[@]}"; do
+            echo "$ASSETS" | grep -qx "$(basename "$f")" || { echo "::error::อัปโหลด $(basename "$f") ไม่สำเร็จ"; exit 1; }
+          done
 
       - name: บันทึก HTML ที่ดึงมาลง repo (ถ้าเลือกดึงจากเว็บ)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.pull_web }}
@@ -118,5 +162,7 @@ jobs:
         shell: bash
         run: |
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "✅ สร้าง **v${{ steps.ver.outputs.version }}** เป็น Release **ฉบับร่าง (Draft)** แล้ว" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ สร้าง **v${{ steps.ver.outputs.version }}** เป็น Release **ฉบับร่าง (Draft)** แล้ว — ยังไม่มีใครได้รับอัปเดต" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "ขั้นต่อไป: หน้า **Releases** → ดาวน์โหลด Setup.exe มาทดสอบ → ถ้าผ่าน กด ✏️ แล้ว **Publish release**" >> "$GITHUB_STEP_SUMMARY"
+          echo "ถ้าไม่ผ่าน: แก้แล้ว Run workflow ด้วยเลขเดิมได้เลย (ฉบับร่างจะถูกแทนที่)" >> "$GITHUB_STEP_SUMMARY"
