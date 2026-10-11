@@ -1,0 +1,99 @@
+{
+  "name": "yotha-cad-desktop",
+  "productName": "YothaCAD",
+  "version": "8.8.0",
+  "description": "โยธาแคด — โปรแกรมเขียนแบบอาคาร 2D / 3D",
+  "author": "Pattarakorn Suttipol",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "prepare-web": "node scripts/prepare-web.js",
+    "start": "npm run prepare-web && electron .",
+    "pack": "npm run prepare-web && electron-builder --dir",
+    "dist": "npm run prepare-web && electron-builder --win --publish never",
+    "release": "npm run prepare-web && electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "@fontsource/chakra-petch": "5.3.0",
+    "@fontsource/ibm-plex-sans-thai": "5.3.0",
+    "@fontsource/niramit": "5.3.0",
+    "@fontsource/sarabun": "5.3.0",
+    "electron": "43.7.9",
+    "electron-builder": "26.15.3",
+    "exceljs": "4.4.0",
+    "three": "0.128.0"
+  },
+  "homepage": "https://github.com/patarakorn-bas/yotha-cad-desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/patarakorn-bas/yotha-cad-desktop.git"
+  },
+  "build": {
+    "appId": "com.pattarakorn.yothacad",
+    "productName": "YothaCAD",
+    "copyright": "© Pattarakorn Suttipol",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "app/**/*",
+      "build/icon.png",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asar": true,
+    "fileAssociations": [
+      {
+        "ext": "ycad",
+        "name": "YothaCAD.Project",
+        "description": "โครงการโยธาแคด",
+        "icon": "build/ycad.ico",
+        "role": "Editor"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "executableName": "YothaCAD",
+      "artifactName": "YothaCAD-Setup-${version}.${ext}",
+      "verifyUpdateCodeSignature": false,
+      "legalTrademarks": "Pattarakorn Suttipol"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "โยธาแคด",
+      "uninstallDisplayName": "โยธาแคด ${version}",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "patarakorn-bas",
+        "repo": "yotha-cad-desktop",
+        "releaseType": "draft"
+      }
+    ]
+  }
+}
