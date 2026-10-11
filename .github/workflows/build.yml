@@ -1,0 +1,122 @@
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'เลขเวอร์ชัน ให้ตรงกับเว็บ เช่น เว็บ v8.9 → 8.9.0 / แก้เฉพาะ Windows → 8.9.1'
+        required: true
+        type: string
+      pull_web:
+        description: 'ดึงไฟล์ HTML ล่าสุดจากเว็บ (GitHub Pages) มาแทนไฟล์ใน web/ ก่อน build'
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-windows
+  cancel-in-progress: false
+
+env:
+  WEB_URL: https://patarakorn-bas.github.io/yotha-cad/
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: ดึงโค้ด
+        uses: actions/checkout@v4
+
+      - name: ตรวจและตั้งเลขเวอร์ชัน
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          V="${V#v}"
+          if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::เลขเวอร์ชัน \"$V\" ไม่ถูกต้อง ต้องเป็นรูปแบบ 1.2.3"
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "### โยธาแคด $V" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: ดึง HTML ล่าสุดจากเว็บ (ถ้าเลือก)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.pull_web }}
+        shell: pwsh
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP 'web.html'
+          Invoke-WebRequest -Uri $env:WEB_URL -OutFile $tmp -UseBasicParsing
+          $html = Get-Content $tmp -Raw -Encoding UTF8
+          if ($html -notmatch 'yothacad' -or $html.Length -lt 100000) { throw "ไฟล์ที่ดึงมาไม่ใช่โยธาแคด: $env:WEB_URL" }
+          Remove-Item web\*.html -ErrorAction SilentlyContinue
+          Copy-Item $tmp web\index.html
+          "ดึง HTML จาก $env:WEB_URL ($([math]::Round($html.Length/1024)) KB)" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: ติดตั้ง Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: ติดตั้งแพ็กเกจ
+        run: npm ci
+
+      - name: เทียบเลขเวอร์ชันกับเวอร์ชันเว็บ
+        shell: bash
+        run: |
+          node scripts/prepare-web.js
+          WEB=$(node -p "require('./app/build-info.json').webVersion || ''")
+          V="${{ steps.ver.outputs.version }}"
+          echo "แอปเว็บ: ${WEB:-ไม่ทราบ} • ตัว Windows: $V" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$WEB" ]; then
+            W="${WEB#v}"; W_MM=$(echo "$W" | cut -d. -f1,2); V_MM=$(echo "$V" | cut -d. -f1,2)
+            if [ "$W_MM" != "$V_MM" ]; then
+              echo "::warning::เลขเวอร์ชัน $V ไม่ตรงกับเว็บ $WEB (ควรเป็น $W_MM.x) — build ต่อได้ แต่ตรวจให้แน่ใจว่าตั้งใจ"
+            fi
+          fi
+
+      - name: ตั้งเลขเวอร์ชันใน package.json
+        run: npm version ${{ steps.ver.outputs.version }} --no-git-tag-version --allow-same-version
+
+      - name: สร้างไฟล์ติดตั้งและเก็บเป็น Release ฉบับร่าง
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run release
+
+      - name: เก็บไฟล์ติดตั้งไว้ในหน้า Actions ด้วย
+        uses: actions/upload-artifact@v4
+        with:
+          name: YothaCAD-Setup-${{ steps.ver.outputs.version }}
+          path: |
+            dist/*.exe
+            dist/latest.yml
+          retention-days: 30
+
+      - name: บันทึก HTML ที่ดึงมาลง repo (ถ้าเลือกดึงจากเว็บ)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.pull_web }}
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A web
+          if git diff --cached --quiet; then echo "HTML ไม่เปลี่ยน"; exit 0; fi
+          git commit -m "web: อัปเดต HTML จากเวอร์ชันเว็บ สำหรับ v${{ steps.ver.outputs.version }}"
+          git push
+
+      - name: สรุป
+        shell: bash
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ สร้าง **v${{ steps.ver.outputs.version }}** เป็น Release **ฉบับร่าง (Draft)** แล้ว" >> "$GITHUB_STEP_SUMMARY"
+          echo "ขั้นต่อไป: หน้า **Releases** → ดาวน์โหลด Setup.exe มาทดสอบ → ถ้าผ่าน กด ✏️ แล้ว **Publish release**" >> "$GITHUB_STEP_SUMMARY"
