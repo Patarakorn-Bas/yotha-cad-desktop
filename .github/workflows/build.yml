@@ -128,20 +128,24 @@ jobs:
         run: |
           V="${{ steps.ver.outputs.version }}"; T="v$V"; EXE="${{ steps.files.outputs.exe }}"
           FILES=("$EXE" "$EXE.blockmap" dist/latest.yml)
-          if gh release view "$T" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            if [ "$(gh release view "$T" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)" != "true" ]; then
-              echo "::error::$T ถูก Publish ไปแล้ว — Run ใหม่ด้วยเลขเวอร์ชันที่สูงกว่า"
-              exit 1
-            fi
-            echo "มีฉบับร่าง $T อยู่แล้ว → อัปโหลดไฟล์ใหม่ทับ"
-            gh release upload "$T" "${FILES[@]}" --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$T" "${FILES[@]}" --repo "$GITHUB_REPOSITORY" --draft \
-              --title "$V" --target "$GITHUB_SHA" \
-              --notes "โยธาแคดสำหรับ Windows $V — ดาวน์โหลด YothaCAD-Setup-$V.exe"
+          R="$GITHUB_REPOSITORY"
+          # หา release ทั้งหมดที่ใช้ tag นี้ (รวมฉบับร่าง ซึ่งค้นด้วย tag ตรง ๆ ไม่เจอ)
+          IDS=$(gh api "repos/$R/releases?per_page=100" --paginate --jq ".[] | select(.tag_name==\"$T\") | \"\(.id) \(.draft)\"")
+          if echo "$IDS" | grep -q " false$"; then
+            echo "::error::$T ถูก Publish ไปแล้ว — Run ใหม่ด้วยเลขเวอร์ชันที่สูงกว่า"
+            exit 1
           fi
+          # ลบฉบับร่างเก่าของเลขนี้ทั้งหมด แล้วสร้างใหม่ให้เหลืออันเดียว
+          for id in $(echo "$IDS" | awk 'NF{print $1}'); do
+            echo "ลบฉบับร่างเก่า id=$id"
+            gh api -X DELETE "repos/$R/releases/$id"
+          done
+          gh release create "$T" "${FILES[@]}" --repo "$R" --draft \
+            --title "$V" --target "$GITHUB_SHA" \
+            --notes "โยธาแคดสำหรับ Windows $V — ดาวน์โหลด YothaCAD-Setup-$V.exe"
+          sleep 3
           echo "ไฟล์ใน Release:"
-          ASSETS=$(gh release view "$T" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+          ASSETS=$(gh api "repos/$R/releases?per_page=100" --jq ".[] | select(.tag_name==\"$T\" and .draft) | .assets[].name")
           echo "$ASSETS"
           for f in "${FILES[@]}"; do
             echo "$ASSETS" | grep -qx "$(basename "$f")" || { echo "::error::อัปโหลด $(basename "$f") ไม่สำเร็จ"; exit 1; }
